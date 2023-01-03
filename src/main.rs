@@ -20,7 +20,7 @@ struct Cli {
     string_mode: bool,
 
     #[clap(short, long)]
-    dry: bool,
+    force: bool,
 }
 
 struct Stylizer(ChangeTag);
@@ -43,13 +43,16 @@ impl Stylizer {
     }
 }
 
-fn do_file_replacement(path: &Path, find: &Regex, replace_with: &str, dry: bool) -> Result<()> {
+fn do_file_replacement(path: &Path, find: &Regex, replace_with: &str, force: bool) -> Result<()> {
     let Ok(contents) = fs::read_to_string(path) else {
         return Ok(());
     };
     let new_contents = find.replace_all(&contents, &*replace_with);
     if new_contents != contents {
-        if dry {
+        if force {
+            fs::write(path, new_contents.as_bytes())?;
+            eprintln!("{}: File was changed.", path.display());
+        } else {
             let mut stdout = std::io::stdout().lock();
             let diff = TextDiff::from_lines(contents.as_str(), &new_contents);
             println!("--- a/{0}\n+++ b/{0}", path.display());
@@ -72,9 +75,6 @@ fn do_file_replacement(path: &Path, find: &Regex, replace_with: &str, dry: bool)
                     }
                 }
             }
-        } else {
-            fs::write(path, new_contents.as_bytes())?;
-            eprintln!("{}: File was changed.", path.display());
         }
     }
     Ok(())
@@ -94,7 +94,7 @@ fn main() -> Result<()> {
     let replace_with = replacer.replace_all(&cli.replace_with, r"$1$${$3}").to_string();
     if let Some(files) = &cli.files {
         for file in files {
-            do_file_replacement(Path::new(file), &find, &replace_with, cli.dry)?;
+            do_file_replacement(Path::new(file), &find, &replace_with, cli.force)?;
         }
     } else if has_stdin {
         let replace_with = replace_with.green().to_string();
@@ -106,7 +106,7 @@ fn main() -> Result<()> {
     } else {
         // recurse through the current directory
         for entry in ignore::Walk::new("./").filter_map(|r| r.ok()).filter(|e| e.path().is_file()) {
-            do_file_replacement(entry.path(), &find, &replace_with, cli.dry)?;
+            do_file_replacement(entry.path(), &find, &replace_with, cli.force)?;
         }
     }
     Ok(())
