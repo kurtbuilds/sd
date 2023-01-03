@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 #[command(author, version, about)]
 struct Cli {
     find: String,
+    /// Use :1, :n to specify group replacement. For example, `sd 'foo(\d+)' bar:1` will replace "foo55" with "bar55".
     replace_with: String,
     files: Option<Vec<String>>,
 
@@ -78,20 +79,22 @@ fn main() -> Result<()> {
         Regex::new(&cli.find).map_err(|e| anyhow!("Tried to parse {:?} as a regex, but failed.\nTry using -s to interpret <FIND> as a string, or fix your regex.\n\n{}", &cli.find, e))?
     };
 
+    let replacer = Regex::new(r"(^|[^\\])(:)(\d+)").unwrap();
+    let replace_with = replacer.replace_all(&cli.replace_with, r"$1$${$3}").to_string();
     if let Some(files) = &cli.files {
         for file in files {
-            do_file_replacement(Path::new(file), &find, &cli.replace_with, cli.dry)?;
+            do_file_replacement(Path::new(file), &find, &replace_with, cli.dry)?;
         }
     } else if has_stdin {
         for line in std::io::stdin().lock().lines() {
             let line = line?;
-            let line = find.replace_all(&line, &cli.replace_with);
+            let line = find.replace_all(&line, &replace_with);
             println!("{}", line);
         }
     } else {
         // recurse through the current directory
         for entry in ignore::Walk::new("./").filter_map(|r| r.ok()).filter(|e| e.path().is_file()) {
-            do_file_replacement(entry.path(), &find, &cli.replace_with, cli.dry)?;
+            do_file_replacement(entry.path(), &find, &replace_with, cli.dry)?;
         }
     }
     Ok(())
