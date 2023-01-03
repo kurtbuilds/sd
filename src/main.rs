@@ -1,17 +1,18 @@
 use regex::Regex;
 use std::fs;
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 use std::path::{Path};
 use anyhow::{Result, anyhow};
-use similar::{ChangeTag, TextDiff};
+use similar::{ChangeTag, DiffTag, TextDiff};
 use clap::{Parser, Subcommand};
+use colored::{Color, ColoredString, Colorize};
 
 
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
     find: String,
-    /// Use :1, :n to specify group replacement. For example, `sd 'foo(\d+)' bar:1` will replace "foo55" with "bar55".
+    /// Use $1, $n to specify group replacement. For example, `sd 'foo(\d+)' 'bar$1'` will replace "foo55" with "bar55".
     replace_with: String,
     files: Option<Vec<String>>,
 
@@ -20,29 +21,27 @@ struct Cli {
 
     #[clap(short, long)]
     dry: bool,
-
 }
 
-#[derive(Parser)]
-struct AbsoluteToRelative {
-    #[clap(long)]
-    dry: bool,
-    path: String,
-}
+struct Stylizer(ChangeTag);
 
-#[derive(Parser)]
-struct RelativeToAbsolute {
-    #[clap(long)]
-    dry: bool,
-    fpath: String,
-}
+impl Stylizer {
+    fn style(&self, s: &str) -> ColoredString {
+        match self.0 {
+            ChangeTag::Delete => s.red(),
+            ChangeTag::Insert => s.green(),
+            ChangeTag::Equal => s.normal(),
+        }
+    }
 
-#[derive(Subcommand)]
-enum Command {
-    AbsoluteToRelative(AbsoluteToRelative),
-    RelativeToAbsolute(RelativeToAbsolute),
+    fn sign(&self) -> ColoredString {
+        match self.0 {
+            ChangeTag::Delete => "-".red(),
+            ChangeTag::Insert => "+".green(),
+            ChangeTag::Equal => " ".normal(),
+        }
+    }
 }
-
 
 fn do_file_replacement(path: &Path, find: &Regex, replace_with: &str, dry: bool) -> Result<()> {
     let Ok(contents) = fs::read_to_string(path) else {
@@ -51,15 +50,27 @@ fn do_file_replacement(path: &Path, find: &Regex, replace_with: &str, dry: bool)
     let new_contents = find.replace_all(&contents, &*replace_with);
     if new_contents != contents {
         if dry {
+            let mut stdout = std::io::stdout().lock();
             let diff = TextDiff::from_lines(contents.as_str(), &new_contents);
             println!("--- a/{0}\n+++ b/{0}", path.display());
-            for change in diff.iter_all_changes() {
-                let sign = match change.tag() {
-                    ChangeTag::Delete => "-",
-                    ChangeTag::Insert => "+",
-                    ChangeTag::Equal => continue,
-                };
-                print!("{}{}", sign, change);
+            for group in diff.grouped_ops(3).iter() {
+                for op in group {
+                    if op.tag() == DiffTag::Equal {
+                        continue;
+                    }
+                    for change in diff.iter_inline_changes(op) {
+                        let stylizer = Stylizer(change.tag());
+                        write!(stdout, "{}", stylizer.sign()).unwrap();
+                        for (emphasized, value) in change.iter_strings_lossy() {
+                            let value = value.to_string();
+                            if emphasized {
+                                write!(stdout, "{}", stylizer.style(&value)).unwrap();
+                            } else {
+                                write!(stdout, "{}", value).unwrap();
+                            }
+                        }
+                    }
+                }
             }
         } else {
             fs::write(path, new_contents.as_bytes())?;
@@ -79,13 +90,14 @@ fn main() -> Result<()> {
         Regex::new(&cli.find).map_err(|e| anyhow!("Tried to parse {:?} as a regex, but failed.\nTry using -s to interpret <FIND> as a string, or fix your regex.\n\n{}", &cli.find, e))?
     };
 
-    let replacer = Regex::new(r"(^|[^\\])(:)(\d+)").unwrap();
+    let replacer = Regex::new(r"(^|[^\\])($)(\d+)").unwrap();
     let replace_with = replacer.replace_all(&cli.replace_with, r"$1$${$3}").to_string();
     if let Some(files) = &cli.files {
         for file in files {
             do_file_replacement(Path::new(file), &find, &replace_with, cli.dry)?;
         }
     } else if has_stdin {
+        let replace_with = replace_with.green().to_string();
         for line in std::io::stdin().lock().lines() {
             let line = line?;
             let line = find.replace_all(&line, &replace_with);

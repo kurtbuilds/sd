@@ -11,4 +11,5 @@ anyhow = "1.0.66"
 ignore = "0.4.18"
 atty = "0.2.14"
 regex = "1.7.0"
-similar = "2.2.1"
+similar = { version = "2.2.1", features = ["inline", "unicode"] }
+colored = "2.0.0"
