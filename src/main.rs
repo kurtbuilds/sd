@@ -16,10 +16,10 @@ struct Cli {
     replace_with: String,
     files: Option<Vec<String>>,
 
-    #[clap(short, long)]
+    #[arg(short, long)]
     string_mode: bool,
 
-    #[clap(short, long)]
+    #[arg(short, long)]
     force: bool,
 }
 
